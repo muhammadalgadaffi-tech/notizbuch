@@ -8,6 +8,8 @@ import { setQuery } from '../core/router.js';
 import { askJournal, getJob, isRunning, dismissJob } from '../ai/tasks.js';
 import { entryRow, label, empty, progress } from '../ui/components.js';
 import { section, checkDetails, basisDetails, errorCallout, entryCard, modelName } from '../ui/analysis.js';
+import { aboBox, renderAboAnswer } from '../ui/abo.js';
+import { copyQuestionPrompt, pendingQuestion, saveQuestionAnswer, cancelPending } from '../ai/abo.js';
 
 const EXAMPLES = [
   'Was ist mir in den letzten zwei Wochen über meine Motivation aufgefallen?',
@@ -26,21 +28,26 @@ function textSearch(q) {
 }
 
 function answerCard(record, onClose) {
-  const r = record.result;
+  const r = record.result || {};
   const belege = (r.belege || []).map((b) => ({ b, e: store.get(b.eintrag_id) })).filter((x) => x.e);
   const b = record.basis || {};
   const basisTitle = b.count
     ? `Grundlage: ${b.count} ${b.count === 1 ? 'Eintrag' : 'Einträge'}${b.from ? ` (${fmtDateNumeric(b.from, false)} – ${fmtDateNumeric(b.to, false)})` : ''}`
     : 'Grundlage: keine Einträge';
+  const body = record.mode === 'abo'
+    ? renderAboAnswer(record.text, record.refs).nodes
+    : [
+      section('Antwort', r.antwort),
+      belege.length ? section('Worauf sich das stützt', h('div', {}, belege.map(({ b: x, e }) => entryCard(e, x.bezug)))) : null,
+      section('Mögliches Muster', r.muster),
+      section('Was offen bleibt', r.offen),
+      section('Zum Nachdenken', r.denkfrage),
+    ];
   return h('article', { class: 'answer-card', 'aria-live': 'polite' },
     h('div', { class: 'answer-head' },
       h('h2', { class: 'q-title', text: record.frage }),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Antwort schließen', onClick: onClose }, icon('close', 20))),
-    section('Antwort', r.antwort),
-    belege.length ? section('Worauf sich das stützt', h('div', {}, belege.map(({ b: x, e }) => entryCard(e, x.bezug)))) : null,
-    section('Mögliches Muster', r.muster),
-    section('Was offen bleibt', r.offen),
-    section('Zum Nachdenken', r.denkfrage),
+    body,
     record.empty ? null : h('div', { class: 'an-foot' },
       checkDetails(record.check),
       basisDetails(basisTitle, record.ids || []),
@@ -50,7 +57,8 @@ function answerCard(record, onClose) {
 export function SearchView({ query }) {
   let q = query.get('q') || '';
   let shown = null;
-  let asked = getJob('frage')?.record?.frage || '';
+  let box = null;
+  let asked = (store.aiMode === 'abo' ? pendingQuestion()?.frage : getJob('frage')?.record?.frage) || '';
 
   const input = h('input', {
     type: 'search',
@@ -74,7 +82,19 @@ export function SearchView({ query }) {
     shown = null;
     asked = text;
     input.blur();
-    askJournal(text);
+    if (store.aiMode === 'abo') {
+      // Sofort kopieren – iOS erlaubt das nur direkt beim Antippen.
+      const res = copyQuestionPrompt(text);
+      if (res.empty) {
+        shown = {
+          frage: text, empty: true, at: new Date().toISOString(),
+          result: { antwort: res.basis.range ? `Für den Zeitraum „${res.basis.range}“ gibt es keine Einträge.` : 'Es gibt noch keine Einträge, auf die sich eine Antwort stützen könnte.' },
+        };
+      }
+      dismissJob('frage');
+    } else {
+      askJournal(text);
+    }
     drawAsk();
     drawAnswer();
     answerWrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -92,6 +112,38 @@ export function SearchView({ query }) {
   function drawAnswer() {
     const job = getJob('frage');
     const close = () => { shown = null; asked = ''; dismissJob('frage'); drawAnswer(); drawAsk(); };
+
+    const pending = store.aiMode === 'abo' && !shown ? pendingQuestion() : null;
+    if (pending) {
+      // Nicht neu zeichnen, solange gerade eine Antwort eingefügt wird.
+      if (box?.isConnected && box.querySelector('.abo-answer')?.value.trim()) return;
+      box = aboBox({
+        copyKey: 'frage',
+        what: `deine Frage und ${pending.basis.count} ${pending.basis.count === 1 ? 'Eintrag' : 'Einträge'}`,
+        onCopy: () => { copyQuestionPrompt(pending.frage); },
+        onSave: async (text) => {
+          const rec = await saveQuestionAnswer(text);
+          shown = rec;
+          asked = rec.frage;
+          box = null;
+          drawAnswer();
+          drawResults();
+        },
+        onCancel: async () => {
+          box = null;
+          asked = '';
+          await cancelPending('frage');
+          drawAnswer();
+          drawAsk();
+        },
+      });
+      replace(answerWrap, h('article', { class: 'answer-card' },
+        h('div', { class: 'answer-head' }, h('h2', { class: 'q-title', text: pending.frage })),
+        box));
+      return;
+    }
+    box = null;
+
     if (isRunning('frage')) {
       replace(answerWrap, job.phase === 'review'
         ? progress('Prüfe die Antwort …', 'Jede Aussage wird an deinen Einträgen gegengeprüft.')
@@ -142,6 +194,7 @@ export function SearchView({ query }) {
 
   const offs = [
     store.on('job:frage', drawAnswer),
+    store.on('kv:aboPending', drawAnswer),
     store.on('entries', drawResults),
   ];
 

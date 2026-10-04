@@ -2,7 +2,7 @@
 // damit die App auch ohne Internet startet. Anfragen an api.anthropic.com werden nie zwischengespeichert.
 // Bei jeder Änderung an der App VERSION erhöhen, damit Handys die neue Fassung laden.
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const CACHE = `notizbuch-${VERSION}`;
 const FILES = [
   './',
@@ -25,11 +25,13 @@ const FILES = [
   './js/core/session.js',
   './js/core/store.js',
   './js/core/text.js',
+  './js/ai/abo.js',
   './js/ai/api.js',
   './js/ai/context.js',
   './js/ai/prompts.js',
   './js/ai/schemas.js',
   './js/ai/tasks.js',
+  './js/ui/abo.js',
   './js/ui/analysis.js',
   './js/ui/components.js',
   './js/ui/composer.js',

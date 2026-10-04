@@ -49,7 +49,9 @@ export function entryRow(e, { showDay = false, terms = null } = {}) {
   if (people.length) meta.push(people.slice(0, 3).join(', ') + (people.length > 3 ? ' …' : ''));
 
   const foot = [];
+  const waiting = e.aboRequest && (!e.analysis || new Date(e.aboRequest.at) > new Date(e.analysis.at));
   if (isRunning(`analyse:${e.id}`)) foot.push(h('span', { class: 'pending', text: 'wird analysiert …' }));
+  else if (waiting && store.aiMode === 'abo') foot.push(h('span', { class: 'pending', text: 'wartet auf Claudes Antwort' }));
   else if (getJob(`analyse:${e.id}`)?.phase === 'error') foot.push('Analyse fehlgeschlagen');
   else if (e.mood) foot.push(e.mood);
 

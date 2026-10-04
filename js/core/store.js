@@ -12,6 +12,7 @@ const KV_DEFAULTS = {
   insights: () => ({}),
   questions: () => [],
   draft: () => null,
+  aboPending: () => ({}),
 };
 
 const state = {
@@ -70,7 +71,17 @@ export function normalizeEntry(e) {
       ? e.followUps.filter((f) => f && f.frage).map((f) => ({ frage: String(f.frage), antwort: String(f.antwort || '') }))
       : [],
     analysis: e.analysis && typeof e.analysis === 'object' ? e.analysis : null,
+    // Auftrag, der für das Claude-Abo kopiert wurde und auf eine Antwort wartet
+    aboRequest: e.aboRequest && Array.isArray(e.aboRequest.refs) ? e.aboRequest : null,
   };
+}
+
+/** Bekannte Namen, die in einem Eintrag vorkommen (eingetragen oder wörtlich im Text). */
+function computeMentionKeys(e, canon) {
+  const keys = new Set(e.people.map((p) => norm(p).trim()).filter(Boolean));
+  const nt = norm(e.text);
+  for (const k of canon.keys()) if (!keys.has(k) && nameRegex(k).test(nt)) keys.add(k);
+  return keys;
 }
 
 // ---------- Abgeleitete Werte (Personen, Themen) ----------
@@ -89,12 +100,7 @@ function derive() {
 
   // Erwähnungen: eingetragene Personen + bekannte Namen, die wörtlich im Text stehen.
   const mentions = new Map();
-  for (const e of asc) {
-    const keys = new Set(e.people.map((p) => norm(p).trim()).filter(Boolean));
-    const nt = norm(e.text);
-    for (const k of canon.keys()) if (!keys.has(k) && nameRegex(k).test(nt)) keys.add(k);
-    mentions.set(e.id, keys);
-  }
+  for (const e of asc) mentions.set(e.id, computeMentionKeys(e, canon));
 
   state.derived = { asc, desc, canon, mentions };
   return state.derived;
@@ -257,12 +263,21 @@ export const store = {
   /** Namen (Anzeigeform), die in einem Eintrag vorkommen. */
   mentions(entry) {
     const d = derive();
-    const keys = d.mentions.get(entry.id) || new Set(entry.people.map((p) => norm(p).trim()));
-    return [...keys].map((k) => d.canon.get(k) || k);
+    const keys = this.mentionKeys(entry);
+    return [...keys].map((k) => d.canon.get(k) || entry.people.find((p) => norm(p).trim() === k) || k);
   },
 
   mentionKeys(entry) {
-    return derive().mentions.get(entry.id) || new Set();
+    const d = derive();
+    const stored = state.entries.get(entry.id);
+    // Gespeicherter, unveränderter Eintrag: vorberechnet. Sonst (z. B. noch nicht gespeichert): neu berechnen.
+    if (stored === entry && d.mentions.has(entry.id)) return d.mentions.get(entry.id);
+    return computeMentionKeys(entry, d.canon);
+  },
+
+  /** Weg der Analyse: 'abo' (kostenlos, über die Zwischenablage) oder 'api' (eigenes Guthaben). */
+  get aiMode() {
+    return this.settings.mode === 'api' ? 'api' : 'abo';
   },
 
   displayName(nameOrKey) {

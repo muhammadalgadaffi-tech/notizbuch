@@ -5,15 +5,18 @@ import { store } from '../core/store.js';
 import { fmtDateLong, dayDiff } from '../core/dates.js';
 import { navigate } from '../core/router.js';
 import { analyzeEntry } from '../ai/tasks.js';
+import { copyEntryPrompt } from '../ai/abo.js';
 import { createComposer } from '../ui/composer.js';
 import { pageHead, entryRow, label, empty, toast, settingsButton, lockButton } from '../ui/components.js';
 
 export function TodayView() {
   const composer = createComposer({
     onSubmit: async ({ entry, analyze }) => {
+      // Über das Abo: Auftrag sofort kopieren – iOS erlaubt das nur direkt beim Antippen.
+      if (analyze && store.aiMode === 'abo') entry.aboRequest = copyEntryPrompt(entry);
       const saved = await store.save(entry);
       if (analyze) {
-        if (store.settings.apiKey) analyzeEntry(saved.id);
+        if (store.aiMode === 'api' && store.settings.apiKey) analyzeEntry(saved.id);
         navigate(`#/eintrag/${encodeURIComponent(saved.id)}`);
       } else {
         toast('Gespeichert');

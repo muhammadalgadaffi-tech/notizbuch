@@ -1,5 +1,9 @@
 // Stellt das Material für das Modell zusammen – vollständig auf dem Gerät.
-// Nur was hier ausgewählt wird, verlässt das Gerät (über api.js).
+// Nur was hier ausgewählt wird, verlässt das Gerät (über api.js oder über die Zwischenablage).
+//
+// Mit { labels: true } bekommen die Einträge kurze Kennungen ([E1], [E2] …) statt interner ids.
+// Das ist für den Weg über das Claude-Abo: Die Kennungen sind lesbar, und die App kann sie in
+// Claudes Antwort wieder den richtigen Einträgen zuordnen (refs).
 
 import { store } from '../core/store.js';
 import { norm, stems, shorten } from '../core/text.js';
@@ -14,9 +18,16 @@ function cut(text, max) {
   return t.length > max ? `${t.slice(0, max)} […gekürzt]` : t;
 }
 
+/** Kennungen E1, E2 … in zeitlicher Reihenfolge. */
+function labelMap(entries) {
+  const map = new Map();
+  entries.forEach((e, i) => map.set(e.id, `E${i + 1}`));
+  return map;
+}
+
 /** Ein Eintrag als Textblock für das Modell. */
-export function entryBlock(e, now, maxChars = 900) {
-  const lines = [`<eintrag id="${e.id}" zeit="${fmtForModel(e.occurredAt, now)}">`];
+export function entryBlock(e, now, maxChars = 900, label = null) {
+  const lines = [`<eintrag id="${label || e.id}" zeit="${fmtForModel(e.occurredAt, now)}">`];
   if (e.place) lines.push(`Ort: ${clean(e.place)}`);
   const people = store.mentions(e);
   if (people.length) lines.push(`Personen: ${people.map(clean).join(', ')}`);
@@ -89,14 +100,15 @@ function countsForEntry(entry, now) {
 }
 
 /** Material für die Analyse eines Eintrags. */
-export function materialForEntry(entry, now = new Date()) {
+export function materialForEntry(entry, now = new Date(), { labels = false } = {}) {
   const context = selectForEntry(entry);
+  const lab = labels ? labelMap(context) : null;
   const text = [
     `Heute ist ${fmtNowForModel(now)}.`,
     `Themenliste: ${THEMEN.join(', ')}`,
     '',
     '<neuer_eintrag>',
-    entryBlock(entry, now, 6000),
+    entryBlock(entry, now, 6000, labels ? 'NEU' : null),
     '</neuer_eintrag>',
     '',
     '<zaehlungen>',
@@ -104,10 +116,10 @@ export function materialForEntry(entry, now = new Date()) {
     '</zaehlungen>',
     '',
     `<fruehere_eintraege anzahl="${context.length}" hinweis="auf dem Gerät grob vorausgewählt, nicht alle sind relevant">`,
-    ...context.map((e) => entryBlock(e, now)),
+    ...context.map((e) => entryBlock(e, now, 900, lab?.get(e.id))),
     '</fruehere_eintraege>',
   ].join('\n');
-  return { text, contextIds: context.map((e) => e.id) };
+  return { text, contextIds: context.map((e) => e.id), refs: lab ? [...lab].map(([id, l]) => [l, id]) : [] };
 }
 
 // ---------- Fragen an das Journal ----------
@@ -141,7 +153,7 @@ export function parseRange(question, now = new Date()) {
 
 const QUESTION_WORDS = new Set(['aufgefallen', 'auffallen', 'fallt', 'gibt', 'habe', 'hatte', 'mich', 'mein', 'meine', 'meiner', 'meinem', 'meinen', 'uber', 'eintrage', 'eintragen', 'eintrag', 'geschrieben', 'schreibe', 'erwahnt', 'haufig', 'oft', 'zeitraum', 'passiert'].map(norm));
 
-export function materialForQuestion(question, now = new Date()) {
+export function materialForQuestion(question, now = new Date(), { labels = false } = {}) {
   const range = parseRange(question, now);
   let pool = store.all();
   if (range) pool = pool.filter((e) => { const t = new Date(e.occurredAt); return t >= range.from && t <= range.to; });
@@ -176,6 +188,7 @@ export function materialForQuestion(question, now = new Date()) {
     }
   }
   const entries = chosen.map((x) => x.e).sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
+  const lab = labels ? labelMap(entries) : null;
 
   const text = [
     `Heute ist ${fmtNowForModel(now)}.`,
@@ -185,13 +198,14 @@ export function materialForQuestion(question, now = new Date()) {
     `<frage>${clean(question).slice(0, 600)}</frage>`,
     '',
     '<material>',
-    ...entries.map((e) => entryBlock(e, now, 700)),
+    ...entries.map((e) => entryBlock(e, now, 700, lab?.get(e.id))),
     '</material>',
   ].join('\n');
 
   return {
     text,
     ids: entries.map((e) => e.id),
+    refs: lab ? [...lab].map(([id, l]) => [l, id]) : [],
     basis: {
       count: entries.length,
       from: entries[0]?.occurredAt || null,
@@ -209,8 +223,9 @@ export function entriesForPatterns({ days, person }, now = new Date()) {
   return store.all().filter((e) => new Date(e.occurredAt) >= from).slice(0, 60);
 }
 
-export function materialForPatterns({ days, person }, now = new Date()) {
+export function materialForPatterns({ days, person }, now = new Date(), { labels = false } = {}) {
   const entries = entriesForPatterns({ days, person }, now).sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
+  const lab = labels ? labelMap(entries) : null;
 
   const peopleCount = new Map();
   const themeCount = new Map();
@@ -236,11 +251,17 @@ export function materialForPatterns({ days, person }, now = new Date()) {
     '</zaehlungen>',
     '',
     '<material>',
-    ...entries.map((e) => entryBlock(e, now, 600)),
+    ...entries.map((e) => entryBlock(e, now, 600, lab?.get(e.id))),
     '</material>',
   ].join('\n');
 
-  return { text, ids: entries.map((e) => e.id), count: entries.length, lastEntryAt: entries[entries.length - 1]?.updatedAt || null };
+  return {
+    text,
+    ids: entries.map((e) => e.id),
+    refs: lab ? [...lab].map(([id, l]) => [l, id]) : [],
+    count: entries.length,
+    lastEntryAt: entries[entries.length - 1]?.updatedAt || null,
+  };
 }
 
 export const snippet = (e, n = 90) => shorten(e.text, n);

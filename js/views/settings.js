@@ -14,9 +14,32 @@ import { topbar, label, openSheet, confirmSheet, toast, segmented } from '../ui/
 const fmtMoney = (n) => `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 
 export function SettingsView() {
+  const modeGroup = h('div');
+  const apiWrap = h('div');
   const keyGroup = h('div');
   const modelGroup = h('div');
   const usageWrap = h('div');
+
+  // ---------- Weg der Analyse ----------
+  function drawMode() {
+    const mode = store.aiMode;
+    const option = (id, title, sub) => h('button', {
+      class: 'cell radio-cell', type: 'button', role: 'radio', 'aria-checked': String(id === mode),
+      onClick: async () => { await store.setSettings({ mode: id }); drawMode(); },
+    },
+    h('span', { class: 'tick' }, id === mode ? icon('check', 20) : null),
+    h('span', { class: 'radio-text' }, title, h('span', { class: 'sub', text: sub })));
+    replace(modeGroup,
+      h('div', { class: 'group', role: 'radiogroup', 'aria-label': 'Weg der Analyse' },
+        option('abo', 'Über dein Claude-Abo', 'Kostenlos. Die App kopiert den Auftrag, du fügst ihn in Claude ein und die Antwort hier zurück.'),
+        option('api', 'Automatisch mit eigenem Guthaben', 'Ein Tipp genügt, kostet aber extra (Guthaben bei Anthropic).')),
+      mode === 'abo'
+        ? h('p', { class: 'help' },
+          h('strong', { text: 'Tipp für deine Privatsphäre: ' }),
+          'In der Claude-App unter Einstellungen → Datenschutz ausschalten, dass deine Chats zum Verbessern von Claude genutzt werden dürfen. Den Chat nach dem Kopieren der Antwort löschen.')
+        : null);
+    apiWrap.hidden = mode !== 'api';
+  }
 
   // ---------- API-Schlüssel ----------
   function drawKey(status = null) {
@@ -95,9 +118,11 @@ export function SettingsView() {
     h('p', { class: 'help', text: 'Auf dem Gerät geschätzt aus den Angaben der Antworten. Maßgeblich ist die Abrechnung in deinem Anthropic-Konto.' }));
   }
 
+  drawMode();
   drawKey();
   drawModel();
   drawUsage();
+  apiWrap.append(label('API-Schlüssel'), keyGroup, label('Modell'), modelGroup, label('Verbrauch'), usageWrap);
 
   // ---------- Sicherheit ----------
   function changeCode() {
@@ -244,7 +269,7 @@ export function SettingsView() {
       });
       return [
         h('h2', { text: 'Alle Daten löschen?' }),
-        h('p', { text: 'Alle Einträge, Analysen, der API-Schlüssel und der Code werden von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen. Bereits an Anthropic gesendete Texte liegen dort nach deren Regeln noch eine begrenzte Zeit.' }),
+        h('p', { text: 'Alle Einträge, Analysen, der API-Schlüssel und der Code werden von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen. Chats in deinem Claude-Konto löschst du dort selbst; über die API gesendete Texte liegen bei Anthropic nach deren Regeln noch eine begrenzte Zeit.' }),
         h('div', { class: 'field' }, h('label', { for: 'wipe-confirm', text: 'Zur Bestätigung LÖSCHEN eingeben' }), input),
         h('div', { class: 'stack' }, btn, h('button', { class: 'btn btn-secondary btn-block', type: 'button', onClick: close }, 'Abbrechen')),
       ];
@@ -256,8 +281,9 @@ export function SettingsView() {
   const privacy = h('div', { class: 'group' }, h('div', { class: 'cell-block prose' },
     h('p', {}, h('strong', { text: 'Wo deine Einträge liegen: ' }), 'nur auf diesem Gerät, verschlüsselt mit AES-256. Der Schlüssel dafür wird aus deinem Code abgeleitet; der Code selbst wird nirgends gespeichert. Ohne Code kann niemand die Einträge lesen – auch du nicht, wenn du ihn vergisst.'),
     h('p', {}, h('strong', { text: 'Was es nicht gibt: ' }), 'kein Konto, keinen eigenen Server, keine Werbung, keine Tracker oder Analyse-Tools, kein Teilen, keine öffentlichen Profile.'),
-    h('p', {}, h('strong', { text: 'Was das Gerät verlässt: ' }), 'nur wenn du „Analysieren“, „Journal fragen“ oder „Muster suchen“ antippst. Dann gehen direkt und verschlüsselt (HTTPS) an Anthropic, den Anbieter des Sprachmodells Claude: der Eintrag bzw. deine Frage, die dazu ausgewählten früheren Einträge und einfache Zählungen. Welche Einträge das waren, siehst du unter jeder Antwort bei „Grundlage“. Die App kann technisch mit keiner anderen Adresse sprechen.'),
-    h('p', {}, h('strong', { text: 'Ehrlich gesagt: ' }), 'Das ist keine Ende-zu-Ende-Verschlüsselung. Damit das Modell deine Texte analysieren kann, muss Anthropic sie lesen können. Anthropic gibt an, über die API gesendete Daten standardmäßig nicht zum Training seiner Modelle zu verwenden, bewahrt sie aber für eine begrenzte Zeit auf (z. B. zur Missbrauchserkennung). Die genauen Regeln stehen in Anthropics Datenschutzhinweisen.'),
+    h('p', {}, h('strong', { text: 'Über dein Claude-Abo (Standard): ' }), 'Die App selbst schickt nichts ins Internet. Beim Antippen von „Analysieren“, „Journal fragen“ oder „Muster suchen“ legt sie einen Auftrag in die Zwischenablage: deinen Eintrag bzw. deine Frage, die dazu ausgewählten früheren Einträge und einfache Zählungen. Erst wenn du ihn in Claude einfügst, landet er dort – als normaler Chat in deinem Claude-Konto. Was du dort einfügst, siehst du selbst.'),
+    h('p', {}, h('strong', { text: 'Mit eigenem Guthaben (optional): ' }), 'Dann geht derselbe Inhalt direkt und verschlüsselt (HTTPS) an Anthropic, ohne dass du kopieren musst. Die App kann technisch mit keiner anderen Adresse sprechen. Welche Einträge mitgingen, steht bei beiden Wegen unter jeder Antwort bei „Grundlage“.'),
+    h('p', {}, h('strong', { text: 'Ehrlich gesagt: ' }), 'Das ist keine Ende-zu-Ende-Verschlüsselung. Damit Claude deine Texte analysieren kann, muss Anthropic sie lesen können. Ob Chats aus der Claude-App zum Training genutzt werden dürfen, stellst du in der Claude-App unter Datenschutz ein. Für die API gibt Anthropic an, Daten standardmäßig nicht zum Training zu verwenden; gespeichert werden sie trotzdem eine begrenzte Zeit. Die genauen Regeln stehen in Anthropics Datenschutzhinweisen.'),
     h('p', {}, h('strong', { text: 'Grenzen des Schutzes: ' }), 'Solange das Notizbuch geöffnet ist, sind die Daten im Arbeitsspeicher entschlüsselt. Ein kurzer Code (z. B. vier Ziffern) lässt sich mit Zugriff auf die Gerätedaten und Rechenaufwand durchprobieren – ein längerer Code schützt deutlich besser. Wenn du die App vom Home-Bildschirm löschst, sind auch die Daten weg; sichere deshalb ab und zu ein Backup.')));
 
   const el = h('div', { class: 'page' },
@@ -265,11 +291,8 @@ export function SettingsView() {
     h('header', { class: 'page-head' }, h('div', { class: 'grow' }, h('h1', { class: 'page-title', text: 'Einstellungen' }))),
 
     label('Analyse'),
-    keyGroup,
-    label('Modell'),
-    modelGroup,
-    label('Verbrauch'),
-    usageWrap,
+    modeGroup,
+    apiWrap,
 
     label('Sicherheit'),
     h('div', { class: 'group' },
@@ -292,7 +315,7 @@ export function SettingsView() {
     label('Datenschutz'),
     privacy,
 
-    h('p', { class: 'help', text: 'Notizbuch · Version 1.0' }));
+    h('p', { class: 'help', text: 'Notizbuch · Version 1.1' }));
 
   const offs = [store.on('kv:usage', drawUsage)];
   return { el, unmount() { offs.forEach((off) => off()); } };

@@ -439,6 +439,43 @@ a.tag { color: var(--ink-2); }
 }
 .callout .btn { margin-top: 12px; }
 
+/* ---------- Weg über das Claude-Abo ---------- */
+
+.abo-box { margin-top: 14px; padding: 16px; border-radius: 16px; background: var(--field); }
+.answer-card .abo-box, .card .abo-box { padding: 0; background: none; }
+.abo-steps { list-style: none; }
+.abo-step { display: flex; gap: 12px; }
+.abo-step + .abo-step { margin-top: 18px; }
+.abo-num {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--ink); color: var(--bg);
+  font-size: 14px; font-weight: 600;
+}
+.abo-step-main { flex: 1; min-width: 0; }
+.abo-step-title { font-size: 15px; font-weight: 600; margin: 2px 0 8px; }
+.abo-done { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--ink); font-size: 15px; }
+.abo-done svg { color: var(--accent); }
+.abo-again { padding: 0; min-height: 36px; }
+.abo-manual { margin-top: 8px; font-size: 13px; max-height: 160px; }
+.abo-answer { min-height: 96px; max-height: 40dvh; font-size: 15px; }
+.abo-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.abo-foot .btn-quiet { padding: 0; min-height: 36px; }
+.abo-old { margin-top: 22px; }
+.abo-sub { margin: 14px 0 4px; font-size: 16px; font-weight: 600; }
+.ref {
+  display: inline-block;
+  font-size: 13px; line-height: 1.5;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.an-sec p + p { margin-top: 6px; }
+
 /* ---------- Insights ---------- */
 
 .stats { display: flex; gap: 28px; flex-wrap: wrap; }

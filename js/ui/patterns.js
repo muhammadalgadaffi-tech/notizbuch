@@ -7,6 +7,8 @@ import { findPatterns, getJob, isRunning, patternKey, patternSignature } from '.
 import { entriesForPatterns } from '../ai/context.js';
 import { progress } from './components.js';
 import { section, checkDetails, errorCallout, modelName } from './analysis.js';
+import { aboBox, renderAboAnswer } from './abo.js';
+import { copyPatternsPrompt, pendingPatterns, savePatternsAnswer, cancelPending } from '../ai/abo.js';
 
 function refsDetails(ids) {
   const entries = ids.map((id) => store.get(id)).filter(Boolean);
@@ -66,38 +68,67 @@ export function patternsCard(opts, { minEntries = 3 } = {}) {
       return;
     }
 
+    const abo = store.aiMode === 'abo';
+    const pending = abo ? pendingPatterns(opts) : null;
+    // Nicht neu zeichnen, solange gerade eine Antwort eingefügt wird.
+    if (pending && box?.isConnected && box.querySelector('.abo-answer')?.value.trim()) return;
+    box = null;
+
+    // Je nach Einstellung kopieren (kostenlos) oder automatisch auswerten. Direkt beim Antippen.
+    const start = () => {
+      if (abo) { copyPatternsPrompt(opts); draw(); } else findPatterns(opts);
+    };
+
     const parts = [];
     if (job?.phase === 'error') parts.push(errorCallout(job.error, () => findPatterns(opts)));
 
+    if (pending) {
+      box = aboBox({
+        copyKey: `muster:${patternKey(opts)}`,
+        what: `${pending.count} Einträge`,
+        onCopy: () => { copyPatternsPrompt(opts); },
+        onSave: (text) => savePatternsAnswer(opts, text),
+        onCancel: () => cancelPending('muster', opts),
+      });
+      parts.push(box);
+      if (record) parts.push(h('p', { class: 'small muted abo-old', text: 'Bisherige Auswertung:' }));
+    }
+
     if (record) {
       const stale = record.signature !== patternSignature(opts);
-      parts.push(...renderResult(record));
+      if (record.mode === 'abo') parts.push(...renderAboAnswer(record.text, record.refs).nodes);
+      else parts.push(...renderResult(record));
       parts.push(h('div', { class: 'an-foot' },
         checkDetails(record.check),
         h('div', { class: 'chips chips-below' },
           h('span', { text: `${fmtStamp(record.at)} · ${record.count} Einträge · ${modelName(record.model)}` }),
           h('span', { class: 'grow' }),
-          h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => findPatterns(opts) }, stale ? 'Aktualisieren' : 'Neu auswerten')),
-        stale ? h('p', { class: 'small muted', text: 'Seit dieser Auswertung gibt es neue oder geänderte Einträge.' }) : null));
+          pending ? null : h('button', { class: 'btn btn-quiet', type: 'button', onClick: start }, stale ? 'Aktualisieren' : 'Neu auswerten')),
+        stale && !pending ? h('p', { class: 'small muted', text: 'Seit dieser Auswertung gibt es neue oder geänderte Einträge.' }) : null));
+    } else if (pending) {
+      // nur die drei Schritte
     } else if (count < minEntries) {
       parts.push(h('p', { class: 'muted', text: `Für Muster braucht es mindestens ${minEntries} Einträge${opts.person ? ` mit ${opts.person}` : ' in diesem Zeitraum'}. Bisher: ${count}.` }));
-    } else if (!store.settings.apiKey) {
-      parts.push(h('p', { class: 'muted', text: 'Für die Auswertung braucht die App einen API-Schlüssel.' }),
+    } else if (!abo && !store.settings.apiKey) {
+      parts.push(h('p', { class: 'muted', text: 'Für die automatische Auswertung fehlt ein API-Schlüssel.' }),
         h('div', { class: 'actions' }, h('a', { class: 'btn btn-secondary grow', href: '#/einstellungen' }, 'Einrichten')));
     } else if (job?.phase !== 'error') {
+      const what = opts.person ? `Die ${count} Einträge mit ${opts.person}` : `Die ${count} Einträge aus diesem Zeitraum`;
       parts.push(
-        h('p', { class: 'muted', text: opts.person
-          ? `Die ${count} Einträge mit ${opts.person} werden nach Wiederholungen durchsucht und anschließend gegengeprüft.`
-          : `Die ${count} Einträge aus diesem Zeitraum werden nach Wiederholungen durchsucht und anschließend gegengeprüft.` }),
-        h('div', { class: 'actions' }, h('button', { class: 'btn btn-primary grow', type: 'button', onClick: () => findPatterns(opts) }, 'Muster suchen')));
+        h('p', { class: 'muted', text: abo
+          ? `${what} werden als Auftrag für Claude kopiert – kostenlos über dein Abo.`
+          : `${what} werden nach Wiederholungen durchsucht und anschließend gegengeprüft.` }),
+        h('div', { class: 'actions' }, h('button', { class: 'btn btn-primary grow', type: 'button', onClick: start }, 'Muster suchen')));
     }
     replace(el, parts);
   }
 
+  let box = null;
   draw();
   const offs = [
     store.on(`job:${jobKey}`, draw),
     store.on('kv:insights', draw),
+    store.on('kv:aboPending', draw),
     store.on('entries', draw),
     store.on('kv:settings', draw),
   ];

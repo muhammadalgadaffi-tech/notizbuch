@@ -1,12 +1,15 @@
 // Darstellung der Analyse eines Eintrags – und gemeinsame Teile für Suche und Insights.
+// Zwei Wege: über das Claude-Abo (Kopieren, kostenlos) oder automatisch mit eigenem Guthaben.
 
 import { h, icon, clear, append, debounce, autoGrow } from '../core/dom.js';
 import { store } from '../core/store.js';
 import { fmtShortDay, fmtTime, fmtAgoDays, fmtStamp } from '../core/dates.js';
 import { shorten } from '../core/text.js';
 import { analyzeEntry, getJob, isRunning, contentHash } from '../ai/tasks.js';
+import { startEntryCopy, copyEntryPrompt, saveEntryAnswer } from '../ai/abo.js';
 import { MODELS } from '../ai/api.js';
 import { progress } from './components.js';
+import { aboBox, renderAboAnswer } from './abo.js';
 import { navigate } from '../core/router.js';
 
 const CHECKS = [
@@ -35,6 +38,12 @@ export function footDetails(summaryText, body) {
 /** Ergebnis der Selbstprüfung – dezent, nur auf Wunsch aufgeklappt. */
 export function checkDetails(check) {
   if (!check) return null;
+  if ('text' in check) {
+    // Weg über das Abo: Claude prüft innerhalb derselben Antwort, die App prüft danach Verweise und Namen.
+    return footDetails('Selbstprüfung (in Claudes Antwort)', h('ul', {},
+      h('li', { text: check.text || 'Claude hat dazu nichts geschrieben.' }),
+      (check.lokal || []).map((c) => h('li', { text: `– ${c} (auf dem Gerät)` }))));
+  }
   const changes = [...(check.korrekturen || []), ...(check.lokal || [])];
   const title = changes.length
     ? `Selbstprüfung · ${changes.length} ${changes.length === 1 ? 'Anpassung' : 'Anpassungen'}`
@@ -56,6 +65,7 @@ export function basisDetails(title, ids) {
 }
 
 export function modelName(id) {
+  if (id === 'claude-abo') return 'über dein Claude-Abo';
   return MODELS[id]?.name || id || '';
 }
 
@@ -78,10 +88,27 @@ export function errorCallout(err, onRetry) {
       needsSettings ? h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => navigate('#/einstellungen') }, 'Einstellungen') : null));
 }
 
+/** „Eintrag und 5 frühere“ – was mitgeschickt wird. */
+export function basisText(n) {
+  return n ? `dein Eintrag und ${n} ${n === 1 ? 'früherer' : 'frühere'}` : 'nur dein Eintrag';
+}
+
+/** Wartet ein kopierter Auftrag noch auf Claudes Antwort? */
+export function waitingForAbo(entry) {
+  const r = entry.aboRequest;
+  return !!r && (!entry.analysis || new Date(r.at) > new Date(entry.analysis.at));
+}
+
+/** Analyse starten – je nach Einstellung kopieren (kostenlos) oder automatisch. Direkt beim Antippen aufrufen. */
+export function startAnalysis(entry) {
+  if (store.aiMode === 'abo') startEntryCopy(entry.id);
+  else analyzeEntry(entry.id);
+}
+
 export function analysisSignature(entry) {
   const job = getJob(`analyse:${entry.id}`);
   const stale = entry.analysis ? entry.analysis.contentHash !== contentHash(entry) : false;
-  return [entry.analysis?.at || '', stale, job?.phase || '', !!store.settings.apiKey].join('|');
+  return [entry.analysis?.at || '', stale, job?.phase || '', !!store.settings.apiKey, store.aiMode, entry.aboRequest?.at || ''].join('|');
 }
 
 /** Füllt `container` mit dem aktuellen Stand der Analyse. */
@@ -90,6 +117,7 @@ export function renderAnalysis(container, entry) {
   const key = `analyse:${entry.id}`;
   const job = getJob(key);
   const a = entry.analysis;
+  const abo = store.aiMode === 'abo';
 
   container.append(h('div', { class: 'an-head' }, h('h2', { class: 'an-title', text: 'Analyse' })));
 
@@ -105,11 +133,29 @@ export function renderAnalysis(container, entry) {
     if (!a) return;
   }
 
+  if (abo && waitingForAbo(entry)) {
+    container.append(aboBox({
+      copyKey: `entry:${entry.id}`,
+      what: basisText(entry.aboRequest.refs.length),
+      onCopy: () => startEntryCopy(entry.id),
+      onSave: (text) => saveEntryAnswer(entry.id, text),
+      onCancel: () => store.update(entry.id, (e) => { e.aboRequest = null; }),
+    }));
+    if (!a) return;
+    container.append(h('p', { class: 'small muted abo-old', text: 'Bisherige Analyse:' }));
+  }
+
   if (!a) {
-    if (!store.settings.apiKey) {
+    if (abo) {
       container.append(h('div', { class: 'callout' },
-        h('p', { text: 'Für die Analyse braucht die App einmalig einen API-Schlüssel von Anthropic. Dein Eintrag ist gespeichert.' }),
-        h('a', { class: 'btn btn-secondary btn-block', href: '#/einstellungen' }, 'Einrichten')));
+        h('p', { text: 'Noch nicht analysiert.' }),
+        h('button', { class: 'btn btn-primary btn-block', type: 'button', onClick: () => startEntryCopy(entry.id) }, 'Analysieren'),
+        h('p', { class: 'help', text: 'Kostenlos über dein Claude-Abo: Die App kopiert den Auftrag, du fügst ihn in Claude ein und die Antwort hier zurück.' })));
+    } else if (!store.settings.apiKey) {
+      container.append(h('div', { class: 'callout' },
+        h('p', { text: 'Für die automatische Analyse fehlt ein API-Schlüssel. Dein Eintrag ist gespeichert.' }),
+        h('a', { class: 'btn btn-secondary btn-block', href: '#/einstellungen' }, 'Einrichten'),
+        h('button', { class: 'btn btn-quiet btn-block', type: 'button', onClick: () => store.setSettings({ mode: 'abo' }) }, 'Stattdessen kostenlos über dein Claude-Abo')));
     } else {
       container.append(h('div', { class: 'callout' },
         h('p', { text: 'Noch nicht analysiert.' }),
@@ -118,13 +164,39 @@ export function renderAnalysis(container, entry) {
     return;
   }
 
-  const r = a.result;
-  if (a.contentHash !== contentHash(entry)) {
+  if (a.contentHash !== contentHash(entry) && !(abo && waitingForAbo(entry))) {
     container.append(h('div', { class: 'callout' },
       h('p', { text: 'Du hast den Eintrag nach dieser Analyse geändert.' }),
-      h('button', { class: 'btn btn-secondary btn-block', type: 'button', onClick: () => analyzeEntry(entry.id) }, 'Neu analysieren')));
+      h('button', { class: 'btn btn-secondary btn-block', type: 'button', onClick: () => startAnalysis(entry) }, 'Neu analysieren')));
   }
 
+  if (a.mode === 'abo') renderAboBody(container, entry, a);
+  else renderApiBody(container, entry, a);
+}
+
+function footer(entry, a) {
+  const n = (a.contextIds || []).filter((id) => store.get(id)).length;
+  return h('div', { class: 'an-foot' },
+    checkDetails(a.check),
+    basisDetails(n ? `Grundlage: dieser Eintrag und ${n} ${n === 1 ? 'früherer' : 'frühere'}` : 'Grundlage: nur dieser Eintrag', a.contextIds || []),
+    h('div', { class: 'chips chips-below' },
+      h('span', { text: `${fmtStamp(a.at)} · ${modelName(a.model)}` }),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => startAnalysis(entry) }, 'Neu analysieren')));
+}
+
+/** Antwort aus dem Claude-Abo (Text mit Überschriften). */
+function renderAboBody(container, entry, a) {
+  const { nodes, reflect, special } = renderAboAnswer(a.text, a.refs, { splitReflect: true });
+  append(container, nodes);
+  if (special.rueckfragen.length) container.append(questions(entry, special.rueckfragen));
+  if (reflect.length) container.append(h('div', { class: 'reflect' }, reflect));
+  container.append(footer(entry, a));
+}
+
+/** Antwort aus der automatischen Analyse (feste Felder). */
+function renderApiBody(container, entry, a) {
+  const r = a.result;
   if (r.hinweis) container.append(h('div', { class: 'note', role: 'note', text: r.hinweis }));
 
   append(container, [
@@ -153,14 +225,7 @@ export function renderAnalysis(container, entry) {
   ].filter(Boolean);
   if (reflect.length) container.append(h('div', { class: 'reflect' }, reflect));
 
-  const n = a.contextIds.filter((id) => store.get(id)).length;
-  container.append(h('div', { class: 'an-foot' },
-    checkDetails(a.check),
-    basisDetails(n ? `Grundlage: dieser Eintrag und ${n} ${n === 1 ? 'früherer' : 'frühere'}` : 'Grundlage: nur dieser Eintrag', a.contextIds),
-    h('div', { class: 'chips chips-below' },
-      h('span', { text: `${fmtStamp(a.at)} · ${modelName(a.model)}` }),
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => analyzeEntry(entry.id) }, 'Neu analysieren'))));
+  container.append(footer(entry, a));
 }
 
 /** Rückfragen mit Antwortfeldern. Antworten werden verschlüsselt beim Eintrag gespeichert. */
@@ -186,10 +251,22 @@ function questions(entry, list) {
     return { q, ta, save };
   });
 
-  button.addEventListener('click', async () => {
+  button.addEventListener('click', () => {
     for (const f of fields) f.save.flush();
-    await Promise.allSettled(pendingSaves);
-    analyzeEntry(entry.id);
+    if (store.aiMode === 'abo') {
+      // Sofort kopieren (iOS erlaubt das nur direkt beim Antippen) – mit den gerade getippten Antworten.
+      const current = structuredClone(store.get(entry.id) || entry);
+      for (const [q, v] of answers) {
+        const f = current.followUps.find((x) => x.frage === q);
+        if (f) f.antwort = v; else current.followUps.push({ frage: q, antwort: v });
+      }
+      const request = copyEntryPrompt(current);
+      Promise.allSettled(pendingSaves)
+        .then(() => store.update(entry.id, (e) => { e.aboRequest = request; }))
+        .then(() => requestAnimationFrame(() => document.querySelector('.abo-box')?.scrollIntoView({ block: 'start', behavior: 'smooth' })));
+    } else {
+      Promise.allSettled(pendingSaves).then(() => analyzeEntry(entry.id));
+    }
   });
   refresh();
 
